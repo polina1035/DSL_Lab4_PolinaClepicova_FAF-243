@@ -1,0 +1,181 @@
+import random
+
+
+#Структуры данных для абстрактного синтаксического дерева (AST)
+
+class Literal:
+    """Класс для обычных символов (букв/цифр)"""
+
+    def __init__(self, char):
+        self.char = char
+
+    def gen(self):
+        return [self.char]
+
+    def __str__(self):
+        return self.char
+
+
+class Concat:
+    """Класс для конкатенации (склеивания) двух узлов"""
+
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def gen(self):
+        # Декартово произведение: каждое слово слева склеиваем с каждым словом справа
+        return [l + r for l in self.left.gen() for r in self.right.gen()]
+
+    def __str__(self):
+        return f"Concat({self.left}, {self.right})"
+
+
+class Or:
+    """Класс для оператора ИЛИ (|)"""
+
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def gen(self):
+        return self.left.gen() + self.right.gen()
+
+    def __str__(self):
+        return f"Or({self.left}, {self.right})"
+
+
+class Repeat:
+    """Класс для повторений (*, +, ^n) с ограничениями"""
+
+    def __init__(self, node, min_rep, max_rep):
+        self.node = node
+        self.min_rep = min_rep
+        self.max_rep = max_rep
+
+    def gen(self):
+        results = []
+        # Генерируем комбинации для каждого допустимого количества повторений
+        for i in range(self.min_rep, self.max_rep + 1):
+            if i == 0:
+                results.append("")
+            else:
+                current = [""]
+                for _ in range(i):
+                    current = [c + n for c in current for n in self.node.gen()]
+                results.extend(current)
+        return results
+
+    def __str__(self):
+        return f"Repeat({self.node}, {self.min_rep}..{self.max_rep})"
+
+
+#Парсер (Синтаксический анализатор)
+
+class RegexParser:
+    def __init__(self, text):
+        # Убираем пробелы, так как они не участвуют в генерации
+        self.text = text.replace(" ", "")
+        self.pos = 0
+
+    def parse(self):
+        print(f"\n[{self.text}] -синтаксический анализ")
+        node = self.parse_E()
+        if self.pos < len(self.text):
+            raise ValueError(f"Неожиданный символ на позиции {self.pos}: {self.text[self.pos]}")
+        print(f"[{self.text}] -> Анализ завершен! Финальное дерево: {node}\n")
+        return node
+
+    def peek(self):
+        return self.text[self.pos] if self.pos < len(self.text) else None
+
+    def consume(self):
+        char = self.peek()
+        self.pos += 1
+        return char
+
+    def parse_E(self):
+        """Разбор выражений, разделенных ИЛИ (|)"""
+        node = self.parse_T()
+        while self.peek() == '|':
+            self.consume()
+            right = self.parse_T()
+            print(f" -- Выполнена операция ИЛИ (OR): {node} | {right}")
+            node = Or(node, right)
+        return node
+
+    def parse_T(self):
+        """Разбор конкатенации (склеивания)"""
+        nodes = [self.parse_F()]
+        while self.peek() is not None and self.peek() not in (')', '|'):
+            nodes.append(self.parse_F())
+
+        if len(nodes) == 1:
+            return nodes[0]
+
+        node = nodes[0]
+        for right in nodes[1:]:
+            node = Concat(node, right)
+        return node
+
+    def parse_F(self):
+        """Разбор множителей и модификаторов (*, +, ^n)"""
+        node = self.parse_P()
+        modifier = self.peek()
+
+        if modifier == '*':
+            self.consume()
+            print(f" -- Найден Kleene Star (*): повторение '{node}' от 0 до 5 раз")
+            node = Repeat(node, 0, 5)
+        elif modifier == '+':
+            self.consume()
+            print(f" -- Найден Plus (+): повторение '{node}' от 1 до 5 раз")
+            node = Repeat(node, 1, 5)
+        elif modifier == '^':
+            self.consume()  # съедаем '^'
+            num_str = ""
+            while self.peek() is not None and self.peek().isdigit():
+                num_str += self.consume()
+            count = int(num_str)
+            print(f" -- Найдена точная степень (^{count}): повторение '{node}' ровно {count} раз")
+            node = Repeat(node, count, count)
+        return node
+
+    def parse_P(self):
+        """Разбор скобок и базовых символов"""
+        char = self.peek()
+        if char == '(':
+            self.consume()
+            print(" -- Найдена '(', начало группировки...")
+            node = self.parse_E()
+            if self.peek() != ')':
+                raise ValueError("Ожидалась ')'")
+            self.consume()
+            print(f" -- Найдена ')', группа закрыта: {node}")
+            return node
+        else:
+            self.consume()
+            return Literal(char)
+
+
+#Запуск программы
+
+variants = [
+    "(S|T)(U|V)W*Y+24",  # Выражение 1 (с учетом примеров используем заглавные буквы)
+    "L(M|N)O^3P*Q(2|3)",  # Выражение 2
+    "R*S(T|U|V)W(X|Y|Z)^2"  # Выражение 3
+]
+
+for regex in variants:
+    parser = RegexParser(regex)
+    ast_tree = parser.parse()  # Парсим (и выводим шаги для бонуса)
+
+    # Генерируем все возможные валидные комбинации
+    all_combinations = list(set(ast_tree.gen()))
+
+    print(f"Сгенерировано уникальных комбинаций: {len(all_combinations)}")
+
+    # Выводим 5 случайных примеров, чтобы не засорять консоль
+    sample_size = min(5, len(all_combinations))
+    sample = random.sample(all_combinations, sample_size)
+    print(f"Примеры сгенерированных строк: {sample}")
